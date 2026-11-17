@@ -1,6 +1,6 @@
 <p align="center"><img src="assets/banner.gif" alt="haj" width="100%"></p>
 
-<p align="center"><b>$HAJ</b> · a fixed-supply utility token for <a href="https://www.haj.trading">haj</a> · Base · contracts Nov 18 · mint Nov 20, 2026</p>
+<p align="center"><b>$HAJ</b> · a fixed-supply utility token for <a href="https://www.haj.trading">haj</a> · Base · mint Nov 20, 2026</p>
 
 **Supply**
 
@@ -13,40 +13,45 @@
   100,000  10%  founder                           · nothing for 12 months, then linear over 12
 ```
 
-**Token**
+**Token** · [`src/HajToken.sol`](src/HajToken.sol)
 
 ```solidity
 contract HajToken is ERC20 {
+    uint256 public constant SUPPLY = 1_000_000e18;
+
     constructor() ERC20("haj", "HAJ") {
-        _mint(msg.sender, 1_000_000e18); // the only mint, ever
+        _mint(msg.sender, SUPPLY); // the only mint, ever
     }
-    // no owner · no mint() · no pause() · no upgrade
-}
+}   // no owner · no mint() · no pause() · no upgrade
 ```
 
-**Locks**
+**Locks** · [`script/Deploy.s.sol`](script/Deploy.s.sol) · [`src/HajLPLock.sol`](src/HajLPLock.sol)
 
 ```solidity
 // OpenZeppelin VestingWallet, unmodified
 new VestingWallet(founder, launch + 365 days, 365 days); // nothing before Nov 20, 2027
 new VestingWallet(seasons, launch + 365 days, 0);        // released Nov 20, 2027
 
-// HajLPLock: every pool position, the launch one and each later top-up
-function withdraw(uint256 id) external onlyOwner {
-    require(block.timestamp >= unlockAt[id], "locked"); // 365 days from its deposit
+// HajLPLock: every pool position, the launch one and each later top-up, 365 days from its deposit
+function withdraw(uint256 tokenId, address to) external onlyOwner {
+    if (block.timestamp < unlockAt[tokenId]) revert Locked(unlockAt[tokenId]);
+    positions.safeTransferFrom(address(this), to, tokenId);
 }
-function collect(uint256 id) external onlyOwner;        // trading fees only, liquidity stays
+function collect(uint256 tokenId) external onlyOwner;   // trading fees to the owner, liquidity stays
+// no decreaseLiquidity, no approve: nothing else can move a position
 ```
 
-**Claims**
+**Claims** · [`src/HajClaim.sol`](src/HajClaim.sol)
 
 ```solidity
-function setRoot(bytes32 root_) external onlyOwner {
-    require(root == bytes32(0), "set once");            // at the end of Season 1
+function setRoot(bytes32 root_) external {
+    if (msg.sender != rootSetter) revert NotRootSetter();
+    if (root != bytes32(0)) revert RootAlreadySet();    // once, at the end of Season 1
     root = root_;
+    opensAt = uint64(block.timestamp);
 }
-// claimed HAJ unlocks evenly over 90 days
-// unclaimed after 180 days → the seasons lock, never the founder
+// claimed HAJ unlocks evenly over 90 days from opensAt
+// unclaimed after 180 days → sweep() to the seasons lock, never the founder
 ```
 
 **Earning, Season 1**
@@ -58,6 +63,16 @@ usage      20 HAJ
 week two   15 HAJ                            (14 active days)
 ranks      share of 50,000 HAJ
            first 1,000 accounts to clear the bar
+```
+
+**Run it**
+
+```sh
+forge test                      # unit tests + a full launch on forks of Base and Base Sepolia
+
+# launch, every transaction signed on a Ledger
+FOUNDER=0x… SEASONS=0x… forge script script/Deploy.s.sol --rpc-url base --ledger --sender $FOUNDER --broadcast --verify
+FOUNDER=0x… POOL_ETH=<wei> forge script script/Pool.s.sol --rpc-url base --ledger --sender $FOUNDER --broadcast
 ```
 
 Can't: mint more · pause transfers · pull liquidity · founder sells before Nov 2027. No presale, no insider allocations.
