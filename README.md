@@ -1,6 +1,6 @@
 <p align="center"><img src="assets/banner.gif" alt="haj" width="100%"></p>
 
-<p align="center"><b>$HAJ</b> · a fixed-supply utility token for <a href="https://www.haj.trading">haj</a> · Base · mint Nov 20, 2026</p>
+<p align="center"><b>haj</b> · a fixed-supply utility token for <a href="https://www.haj.trading">haj</a> · Base · mint Nov 20, 2026</p>
 
 **Supply**
 
