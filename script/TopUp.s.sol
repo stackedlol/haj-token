@@ -2,33 +2,42 @@
 pragma solidity ^0.8.24;
 
 import {Script, console} from "forge-std/Script.sol";
+import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
+import {IPoolManager} from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
+import {PoolKey} from "@uniswap/v4-core/src/types/PoolKey.sol";
+import {PoolIdLibrary} from "@uniswap/v4-core/src/types/PoolId.sol";
+import {StateLibrary} from "@uniswap/v4-core/src/libraries/StateLibrary.sol";
+import {TickMath} from "@uniswap/v4-core/src/libraries/TickMath.sol";
+import {Actions} from "@uniswap/v4-periphery/src/libraries/Actions.sol";
+import {LiquidityAmounts} from "@uniswap/v4-periphery/src/libraries/LiquidityAmounts.sol";
 import {HajLPLock} from "../src/HajLPLock.sol";
-import {IPositionManager, IUniswapV3Factory, IUniswapV3Pool, Networks, PriceMath} from "./lib/Uniswap.sol";
+import {HajLaunchHook} from "../src/HajLaunchHook.sol";
+import {Networks, PriceMath} from "./lib/Uniswap.sol";
 
 /// @notice Adds deeper liquidity: an ETH-only position between LOW_BPS and HIGH_BPS of HAJ's current price (e.g.
-///         5000 and 9500 = from half the price up to 95% of it). It holds only ETH, so it needs no HAJ, and it goes
-///         straight into the lock with its own 365-day unlock. Writes deployments/topups/<network>-<tokenId>.json.
+///         5000 and 9500 = from half the price up to 95% of it). It holds only ETH, so it needs no HAJ, and it is
+///         minted straight into the lock with its own 365-day unlock. Writes deployments/topups/<network>-<tokenId>.json.
 ///
 ///   FOUNDER=0x… TOPUP_ETH=<wei> LOW_BPS=5000 HIGH_BPS=9500 \
 ///   forge script script/TopUp.s.sol --rpc-url base --ledger --sender $FOUNDER --broadcast
 contract TopUp is Script {
+    using StateLibrary for IPoolManager;
+    using PoolIdLibrary for PoolKey;
+
     struct Range {
         int24 lower;
         int24 upper;
         int24 tickNow;
-        address t0;
-        address t1;
-        uint256 a0;
-        uint256 a1;
+        uint128 liquidity;
     }
 
     function run() external returns (uint256 tokenId) {
         string memory json = vm.readFile(string.concat("deployments/", Networks.name(block.chainid), ".json"));
-        address haj = vm.parseJsonAddress(json, ".token");
+        HajLaunchHook hook = HajLaunchHook(vm.parseJsonAddress(json, ".hook"));
         HajLPLock lock = HajLPLock(vm.parseJsonAddress(json, ".lpLock"));
         uint256 eth = vm.envUint("TOPUP_ETH");
         Range memory r;
-        (tokenId, r) = add(vm.envAddress("FOUNDER"), haj, lock, eth, vm.envUint("LOW_BPS"), vm.envUint("HIGH_BPS"));
+        (tokenId, r) = add(vm.envAddress("FOUNDER"), hook, lock, eth, vm.envUint("LOW_BPS"), vm.envUint("HIGH_BPS"));
         if (vm.envOr("WRITE_DEPLOYMENTS", true)) {
             string memory k = "topup";
             vm.serializeUint(k, "tokenId", tokenId);
@@ -44,77 +53,61 @@ contract TopUp is Script {
         }
     }
 
-    function _params(Range memory r, address founder) internal view returns (IPositionManager.MintParams memory) {
-        // ETH-only: the WETH side must land at least 99%, the HAJ side is zero.
-        return IPositionManager.MintParams({
-            token0: r.t0,
-            token1: r.t1,
-            fee: Networks.FEE,
-            tickLower: r.lower,
-            tickUpper: r.upper,
-            amount0Desired: r.a0,
-            amount1Desired: r.a1,
-            amount0Min: (r.a0 * 99) / 100,
-            amount1Min: (r.a1 * 99) / 100,
-            recipient: founder,
-            deadline: block.timestamp + 20 minutes
-        });
-    }
-
-    function _mint(IPositionManager pm, IPositionManager.MintParams memory p, uint256 eth)
-        internal
-        returns (uint256 tokenId)
-    {
-        bytes[] memory calls = new bytes[](2);
-        calls[0] = abi.encodeCall(IPositionManager.mint, (p));
-        calls[1] = abi.encodeCall(IPositionManager.refundETH, ());
-        bytes[] memory out = pm.multicall{value: eth}(calls);
-        (tokenId,,,) = abi.decode(out[0], (uint256, uint128, uint256, uint256));
-    }
-
     /// @notice The ETH-only range for HAJ prices between lowBps and highBps of now, on the pool's tick spacing.
-    function _range(IPositionManager pm, address haj, uint256 eth, uint256 lowBps, uint256 highBps)
+    /// @dev    ETH is currency0 and the pool's price is HAJ per ETH, so a lower HAJ price is a higher tick, and a range
+    ///         wholly above the current tick holds only currency0 = ETH.
+    function _range(IPoolManager pm, PoolKey memory key, uint256 eth, uint256 lowBps, uint256 highBps)
         internal
         view
         returns (Range memory r)
     {
-        address weth = pm.WETH9();
-        address pool = IUniswapV3Factory(pm.factory()).getPool(haj, weth, Networks.FEE);
-        require(pool != address(0), "no pool yet");
-        (, r.tickNow,,,,,) = IUniswapV3Pool(pool).slot0();
-
-        // HAJ's price in ETH falls as the tick falls when HAJ is token0, and rises with it when HAJ is token1.
+        uint160 price;
+        (price, r.tickNow,,) = pm.getSlot0(key.toId());
+        require(price != 0, "no pool yet");
         int24 near = int24(int256(PriceMath.ticksFor(highBps)));
         int24 far = int24(int256(PriceMath.ticksFor(lowBps)));
-        if (haj < weth) {
-            // Below the current tick the position is all token1 = WETH.
-            r.upper = PriceMath.floorTo(r.tickNow - near, Networks.SPACING);
-            r.lower = PriceMath.floorTo(r.tickNow - far, Networks.SPACING);
-            (r.t0, r.t1, r.a0, r.a1) = (haj, weth, 0, eth);
-        } else {
-            // Above the current tick the position is all token0 = WETH.
-            r.lower = PriceMath.ceilTo(r.tickNow + near + 1, Networks.SPACING);
-            r.upper = PriceMath.ceilTo(r.tickNow + far + 1, Networks.SPACING);
-            (r.t0, r.t1, r.a0, r.a1) = (weth, haj, eth, 0);
-        }
+        r.lower = PriceMath.ceilTo(r.tickNow + near + 1, Networks.SPACING);
+        r.upper = PriceMath.ceilTo(r.tickNow + far + 1, Networks.SPACING);
         require(r.lower < r.upper, "range too narrow for the 200-tick spacing");
+        r.liquidity = LiquidityAmounts.getLiquidityForAmount0(
+            TickMath.getSqrtPriceAtTick(r.lower), TickMath.getSqrtPriceAtTick(r.upper), eth
+        );
+        require(r.liquidity > 0, "TOPUP_ETH too small");
     }
 
-    function add(address founder, address haj, HajLPLock lock, uint256 eth, uint256 lowBps, uint256 highBps)
+    function _mintCall(PoolKey memory key, Range memory r, uint256 eth, address lock, address founder)
+        internal
+        pure
+        returns (bytes memory unlockData)
+    {
+        bytes memory actions =
+            abi.encodePacked(uint8(Actions.MINT_POSITION), uint8(Actions.SETTLE_PAIR), uint8(Actions.SWEEP));
+        bytes[] memory params = new bytes[](3);
+        // ETH-only: at most `eth` of ETH, and no HAJ at all.
+        params[0] = abi.encode(key, r.lower, r.upper, uint256(r.liquidity), uint128(eth), uint128(0), lock, "");
+        params[1] = abi.encode(key.currency0, key.currency1);
+        params[2] = abi.encode(key.currency0, founder);
+        unlockData = abi.encode(actions, params);
+    }
+
+    function add(address founder, HajLaunchHook hook, HajLPLock lock, uint256 eth, uint256 lowBps, uint256 highBps)
         public
         returns (uint256 tokenId, Range memory r)
     {
         require(eth > 0, "TOPUP_ETH");
         require(lowBps < highBps && highBps < 10_000, "need LOW_BPS < HIGH_BPS < 10000");
-        IPositionManager pm = Networks.positionManager(block.chainid);
-        r = _range(pm, haj, eth, lowBps, highBps);
+        Networks.Uniswap memory u = Networks.uniswap(block.chainid);
+        r = _range(u.poolManager, hook.poolKey(), eth, lowBps, highBps);
+        tokenId = u.positionManager.nextTokenId();
+        bytes memory mint = _mintCall(hook.poolKey(), r, eth, address(lock), founder);
 
         vm.startBroadcast(founder);
-        tokenId = _mint(pm, _params(r, founder), eth);
-        pm.safeTransferFrom(founder, address(lock), tokenId);
+        u.positionManager.modifyLiquidities{value: eth}(mint, block.timestamp + 20 minutes);
+        lock.register(tokenId);
         vm.stopBroadcast();
 
-        require(pm.ownerOf(tokenId) == address(lock), "position should be in the lock");
+        require(IERC721(address(u.positionManager)).ownerOf(tokenId) == address(lock), "position should be in the lock");
+        require(u.positionManager.getPositionLiquidity(tokenId) == r.liquidity, "position liquidity");
         console.log("top-up position", tokenId, "locked until", lock.unlockAt(tokenId));
     }
 }

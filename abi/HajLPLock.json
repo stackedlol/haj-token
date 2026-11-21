@@ -5,7 +5,7 @@
       {
         "name": "positions_",
         "type": "address",
-        "internalType": "contract INonfungiblePositionManager"
+        "internalType": "contract IPositionManager"
       },
       {
         "name": "owner_",
@@ -133,7 +133,7 @@
       {
         "name": "",
         "type": "address",
-        "internalType": "contract INonfungiblePositionManager"
+        "internalType": "contract IPositionManager"
       }
     ],
     "stateMutability": "view"

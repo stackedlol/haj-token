@@ -7,11 +7,18 @@ import {VestingWallet} from "@openzeppelin/contracts/finance/VestingWallet.sol";
 import {Hashes} from "@openzeppelin/contracts/utils/cryptography/Hashes.sol";
 import {HajToken} from "../src/HajToken.sol";
 import {HajClaim} from "../src/HajClaim.sol";
-import {HajLPLock, INonfungiblePositionManager} from "../src/HajLPLock.sol";
+import {HajLPLock} from "../src/HajLPLock.sol";
+import {IPositionManager} from "@uniswap/v4-periphery/src/interfaces/IPositionManager.sol";
+import {PositionInfo} from "@uniswap/v4-periphery/src/libraries/PositionInfoLibrary.sol";
+import {PoolKey} from "@uniswap/v4-core/src/types/PoolKey.sol";
+import {Currency} from "@uniswap/v4-core/src/types/Currency.sol";
 
-/// @dev Stands in for Uniswap's position manager in the unit tests (the fork test uses the real one). collect()
-///      records who it paid, so the tests can check fees only ever go to the lock's owner.
+/// @dev Stands in for Uniswap v4's position manager in the unit tests (the fork tests use the real one).
+///      modifyLiquidities() records exactly what the lock asked for, so the tests can check it only ever decreases
+///      liquidity by zero and takes the fees to the lock's owner.
 contract MockPositions is ERC721 {
+    bytes public lastActions;
+    uint256 public lastLiquidity;
     address public lastRecipient;
     uint256 public collects;
 
@@ -21,11 +28,17 @@ contract MockPositions is ERC721 {
         _mint(to, id);
     }
 
-    function collect(INonfungiblePositionManager.CollectParams calldata p) external payable returns (uint256, uint256) {
-        require(ownerOf(p.tokenId) == msg.sender, "not owner");
-        lastRecipient = p.recipient;
+    function getPoolAndPositionInfo(uint256) external pure returns (PoolKey memory key, PositionInfo info) {}
+
+    function modifyLiquidities(bytes calldata unlockData, uint256) external payable {
+        (bytes memory actions, bytes[] memory params) = abi.decode(unlockData, (bytes, bytes[]));
+        (uint256 tokenId, uint256 liquidity,,,) = abi.decode(params[0], (uint256, uint256, uint128, uint128, bytes));
+        require(ownerOf(tokenId) == msg.sender, "not owner");
+        (,, address recipient) = abi.decode(params[1], (Currency, Currency, address));
+        lastActions = actions;
+        lastLiquidity = liquidity;
+        lastRecipient = recipient;
         collects++;
-        return (1, 2);
     }
 }
 
@@ -62,7 +75,7 @@ contract HajTest is Test {
         founderVest = new VestingWallet(founder, launch + 365 days, 365 days);
         seasonsVest = new VestingWallet(seasonsWallet, launch + 365 days, 0);
         claim = new HajClaim(token, founder, address(seasonsVest));
-        lock = new HajLPLock(INonfungiblePositionManager(address(pm)), founder);
+        lock = new HajLPLock(IPositionManager(address(pm)), founder);
         token.transfer(address(claim), 100_000e18);
         token.transfer(address(seasonsVest), 200_000e18);
         token.transfer(address(founderVest), 100_000e18);
@@ -291,11 +304,13 @@ contract HajTest is Test {
         assertEq(lock.unlockAt(3), launch + 430 days + 365 days);
         assertEq(lock.count(), 3);
 
-        // Fees, on every position, to the owner only.
+        // Fees, on every position, to the owner only, and never a real decrease.
         for (uint256 id = 1; id <= 3; id++) {
             vm.prank(founder);
             lock.collect(id);
             assertEq(pm.lastRecipient(), founder);
+            assertEq(pm.lastLiquidity(), 0);
+            assertEq(pm.lastActions(), hex"0111"); // DECREASE_LIQUIDITY, TAKE_PAIR
         }
         vm.prank(alice);
         vm.expectRevert(HajLPLock.NotOwner.selector);
@@ -339,5 +354,67 @@ contract HajTest is Test {
     function test_lpLock_onlyAcceptsPositions() public {
         vm.expectRevert(HajLPLock.NotPositionManager.selector);
         lock.onERC721Received(alice, alice, 1, "");
+    }
+
+    /// @notice Every way of getting a position out of the lock before its unlock time fails, for the owner too.
+    function testFuzz_lpLock_noWayOutBeforeUnlock(uint256 t, address caller) public {
+        pm.mint(founder, 11);
+        vm.prank(founder);
+        pm.safeTransferFrom(founder, address(lock), 11);
+        t = bound(t, 0, 365 days - 1);
+        skip(t);
+
+        // withdraw: Locked for the owner, NotOwner for anyone else
+        vm.prank(founder);
+        vm.expectRevert(abi.encodeWithSelector(HajLPLock.Locked.selector, launch + 365 days));
+        lock.withdraw(11, founder);
+        vm.assume(caller != founder);
+        vm.prank(caller);
+        vm.expectRevert(HajLPLock.NotOwner.selector);
+        lock.withdraw(11, caller);
+
+        // collect: owner only, and it only ever asks for a zero decrease
+        vm.prank(caller);
+        vm.expectRevert(HajLPLock.NotOwner.selector);
+        lock.collect(11);
+        vm.prank(founder);
+        lock.collect(11);
+        assertEq(pm.lastLiquidity(), 0);
+
+        // the position manager itself: nobody but the lock may move the NFT
+        vm.prank(founder);
+        vm.expectRevert();
+        pm.transferFrom(address(lock), founder, 11);
+
+        // the lock has nothing else to call: no decrease, approve, operator, subscriber, transfer, batch or fallback
+        bytes[9] memory calls = [
+            abi.encodeWithSignature("decreaseLiquidity(uint256,uint256)", 11, 1),
+            abi.encodeWithSignature("modifyLiquidities(bytes,uint256)", "", 0),
+            abi.encodeWithSignature("approve(address,uint256)", founder, 11),
+            abi.encodeWithSignature("setApprovalForAll(address,bool)", founder, true),
+            abi.encodeWithSignature("subscribe(uint256,address,bytes)", 11, founder, ""),
+            abi.encodeWithSignature("transferFrom(address,address,uint256)", address(lock), founder, 11),
+            abi.encodeWithSignature("execute(address,bytes)", address(pm), ""),
+            abi.encodeWithSignature("multicall(bytes[])", new bytes[](0)),
+            bytes("")
+        ];
+        for (uint256 i; i < calls.length; i++) {
+            vm.prank(founder);
+            (bool ok,) = address(lock).call(calls[i]);
+            assertFalse(ok);
+        }
+        vm.deal(founder, 1 ether);
+        vm.prank(founder);
+        (bool paid,) = address(lock).call{value: 1}("");
+        assertFalse(paid, "the lock takes no ETH");
+
+        assertEq(pm.ownerOf(11), address(lock));
+        assertEq(lock.unlockAt(11), launch + 365 days);
+    }
+
+    function test_lpLock_registerOnlyWhatItHolds() public {
+        pm.mint(founder, 12);
+        vm.expectRevert(HajLPLock.NotHeld.selector);
+        lock.register(12);
     }
 }

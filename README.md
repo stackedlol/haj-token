@@ -7,7 +7,7 @@
 ```
 1,000,000 HAJ   minted once, never again
 
-  600,000  60%  HAJ/WETH pool, Uniswap v3 on Base · position locked 12 months
+  600,000  60%  HAJ/ETH pool, Uniswap v4 on Base  · position locked 12 months
   200,000  20%  later seasons                     · locked 12 months
   100,000  10%  Season 1, first 1,000 users       · claims open Dec 18, 2026
   100,000  10%  founder                           · nothing for 12 months, then linear over 12
@@ -35,11 +35,34 @@ new VestingWallet(seasons, launch + 365 days, 0);        // released Nov 20, 202
 // HajLPLock: every pool position, the launch one and each later top-up, 365 days from its deposit
 function withdraw(uint256 tokenId, address to) external onlyOwner {
     if (block.timestamp < unlockAt[tokenId]) revert Locked(unlockAt[tokenId]);
-    positions.safeTransferFrom(address(this), to, tokenId);
+    IERC721(address(positions)).safeTransferFrom(address(this), to, tokenId);
 }
-function collect(uint256 tokenId) external onlyOwner;   // trading fees to the owner, liquidity stays
-// no decreaseLiquidity, no approve: nothing else can move a position
+function collect(uint256 tokenId) external onlyOwner {  // trading fees to the owner, liquidity stays
+    actions   = [DECREASE_LIQUIDITY, TAKE_PAIR];
+    params[0] = abi.encode(tokenId, 0, 0, 0, "");        // decrease by zero: how v4 pays out fees
+    params[1] = abi.encode(currency0, currency1, owner);
+    positions.modifyLiquidities(abi.encode(actions, params), block.timestamp);
+}
+// never removes liquidity · never approves anyone · never sets a subscriber: nothing else can move a position
 ```
+
+**Sniper protection** · [`src/HajLaunchHook.sol`](src/HajLaunchHook.sol) · [`script/Pool.s.sol`](script/Pool.s.sol)
+
+<p align="center"><img src="assets/fee-curve.svg" alt="Launch fee: 80% at second 0, falling to 1% at 90 seconds" width="100%"></p>
+
+```
+fee(t) = 1% + 79% × ((90 − t) / 90)²     the first 90 seconds after the pool's liquidity lands, then 1% forever
+
+   0 s  80.0%     15 s  55.9%     30 s  36.1%     60 s  9.8%     90 s  1.0%     120 s  1.0%
+```
+
+The pool's LP fee starts at 80% and falls to 1%, so a bot buying in the launch block keeps a fifth of what it
+puts in (on a fork of Base with a 1 ETH pool, $100 at second 0 buys 21% of what $100 buys at second 120). Pool, position and lock
+happen in one Ledger broadcast, and the clock starts when the liquidity lands. Only the founder can open the pool,
+nobody can trade or add liquidity before that, and only the founder can add liquidity during the 90 seconds. The
+hook has no owner, no admin and no setters.
+
+**Fees paid during the first 90 seconds go to the locked launch position, which pays out to the founder.**
 
 **Claims** · [`src/HajClaim.sol`](src/HajClaim.sol)
 
@@ -70,7 +93,7 @@ ranks      share of 50,000 HAJ
 ```sh
 forge test                      # unit tests + a full launch on forks of Base and Base Sepolia
 
-# launch, every transaction signed on a Ledger
+# launch, every transaction signed on a Ledger (Deploy also deploys the hook; Pool opens the pool, fills it, locks it)
 FOUNDER=0x… SEASONS=0x… forge script script/Deploy.s.sol --rpc-url base --ledger --sender $FOUNDER --broadcast --verify
 FOUNDER=0x… POOL_ETH=<wei> forge script script/Pool.s.sol --rpc-url base --ledger --sender $FOUNDER --broadcast
 ```
