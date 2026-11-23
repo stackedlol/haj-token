@@ -8,3 +8,7 @@ supabase/
 node_modules/
 .DS_Store
 out/
+brandkit/vendor/
+brandkit/.track.json
+brandkit/.serve.log
+brandkit/assets/coin-dark*.mp4

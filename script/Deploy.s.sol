@@ -59,16 +59,17 @@ contract Deploy is Script {
         d.token.transfer(address(d.founderVest), 100_000e18);
         vm.stopBroadcast();
 
-        // The hook goes through the standard CREATE2 deployer (forge sends `new X{salt: …}` there when it
-        // broadcasts) at a salt mined here, before anything is signed, so its address carries exactly HOOK_FLAGS.
-        (bytes32 salt, address at) = mine(
-            keccak256(
-                abi.encodePacked(type(HajLaunchHook).creationCode, abi.encode(u.poolManager, founder, address(d.token)))
-            )
-        );
+        // The hook goes through the standard CREATE2 deployer, called directly (an ordinary transaction to it, the
+        // same on every chain and under every signer), at a salt mined here before anything is signed, so its
+        // address carries exactly HOOK_FLAGS. Forge's own routing of `new X{salt: …}` can't be relied on for this:
+        // forge 1.9 ran it from the founder's address in a script, which lands somewhere else.
+        bytes memory initcode =
+            abi.encodePacked(type(HajLaunchHook).creationCode, abi.encode(u.poolManager, founder, address(d.token)));
+        (bytes32 salt, address at) = mine(keccak256(initcode));
         vm.broadcast(founder);
-        d.hook = new HajLaunchHook{salt: salt}(u.poolManager, founder, address(d.token));
-        require(address(d.hook) == at, "hook landed at an unmined address");
+        (bool ok, bytes memory made) = CREATE2_FACTORY.call(abi.encodePacked(salt, initcode));
+        require(ok && made.length == 20 && address(bytes20(made)) == at, "hook did not land at the mined address");
+        d.hook = HajLaunchHook(at);
 
         require(d.token.balanceOf(founder) == 600_000e18, "founder should hold exactly the pool's 600,000");
         require(d.hook.founder() == founder && d.hook.haj() == address(d.token), "hook");

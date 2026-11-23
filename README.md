@@ -1,6 +1,6 @@
 <p align="center"><img src="assets/banner.gif" alt="haj" width="100%"></p>
 
-<p align="center"><b>haj</b> · a fixed-supply utility token for <a href="https://www.haj.trading">haj</a> · Base · mint Nov 20, 2026</p>
+<p align="center"><b>haj</b> · a fixed-supply utility token for <a href="https://www.haj.trading">haj</a> · Base</p>
 
 **Supply**
 
@@ -29,8 +29,8 @@ contract HajToken is ERC20 {
 
 ```solidity
 // OpenZeppelin VestingWallet, unmodified
-new VestingWallet(founder, launch + 365 days, 365 days); // nothing before Nov 20, 2027
-new VestingWallet(seasons, launch + 365 days, 0);        // released Nov 20, 2027
+new VestingWallet(founder, launch + 365 days, 365 days); // nothing for a year after mint
+new VestingWallet(seasons, launch + 365 days, 0);        // released a year after mint
 
 // HajLPLock: every pool position, the launch one and each later top-up, 365 days from its deposit
 function withdraw(uint256 tokenId, address to) external onlyOwner {
@@ -63,6 +63,21 @@ nobody can trade or add liquidity before that, and only the founder can add liqu
 hook has no owner, no admin and no setters.
 
 **Fees paid during the first 90 seconds go to the locked launch position, which pays out to the founder.**
+
+**Fees, on a real chain** · Base Sepolia rehearsal, signed on a Ledger
+
+<p align="center"><img src="assets/fee-flow.svg" alt="A trade's fee: buyer, Uniswap v4 pool, locked position, founder" width="100%"></p>
+
+```
+buy        0.0002 ETH → 69,964.66 HAJ, through Uniswap's test router      1% fee credited to the locked position
+collect()  0.000002 ETH to the founder, exactly that 1%                   liquidity unchanged · position still locked
+withdraw() Locked(Nov 21, 2027)
+```
+
+[buy](https://sepolia.basescan.org/tx/0x981d63f4a1cfe7493f9fb6b90bd3526f9e6992e8f2b69f0d6d5aefeab349cced) ·
+[collect](https://sepolia.basescan.org/tx/0x3516d5915436efcbbdaff09e65d42babbe3630193ee6ae2d469a90ab78be0531) ·
+[the lock](https://sepolia.basescan.org/address/0x26Dd245714cFE1D2f2E651EE39909311567F60e8) ·
+[all rehearsal addresses](deployments/base-sepolia.json)
 
 **Claims** · [`src/HajClaim.sol`](src/HajClaim.sol)
 
@@ -98,6 +113,8 @@ FOUNDER=0x… SEASONS=0x… forge script script/Deploy.s.sol --rpc-url base --le
 FOUNDER=0x… POOL_ETH=<wei> forge script script/Pool.s.sol --rpc-url base --ledger --sender $FOUNDER --broadcast
 ```
 
-Can't: mint more · pause transfers · pull liquidity · founder sells before Nov 2027. No presale, no insider allocations.
+Logo and listing pack: [`assets/token/`](assets/token/LISTING.md).
+
+Can't: mint more · pause transfers · pull liquidity · founder sells in the first year. No presale, no insider allocations.
 
 <sub>A utility token for use within haj; nothing here is an offer to sell or investment advice. MIT.</sub>
