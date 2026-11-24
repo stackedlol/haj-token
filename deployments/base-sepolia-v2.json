@@ -1,0 +1,12 @@
+{
+  "chainId": 84532,
+  "claim": "0xeD501232f7eeA5EAee49B03634D073324e6299f9",
+  "founderVesting": "0x4122Fbf22CaF91C174bB1AC68AcA6018bf21BD89",
+  "hook": "0x1E23A0d73948c59Fc9c486A78d63849b44a06880",
+  "launch": 1795478448,
+  "launchPosition": 34301,
+  "lpLock": "0x2E3DF02fb68Ab66F29e0eDC70461007734986779",
+  "seasonsVesting": "0xb735AD5b0ED6E75dDB21Dc5565b99fA28522283E",
+  "token": "0xcbe7db924A65E17C0b76C50Fd6aB0D4c629f4c52",
+  "floorPosition": 34302
+}

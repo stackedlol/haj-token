@@ -7,7 +7,7 @@
 ```
 1,000,000 HAJ   minted once, never again
 
-  600,000  60%  HAJ/ETH pool, Uniswap v4 on Base  · position locked 12 months
+  600,000  60%  HAJ/ETH pool, Uniswap v4 on Base  · for sale from the starting price up · locked 12 months
   200,000  20%  later seasons                     · locked 12 months
   100,000  10%  Season 1, first 1,000 users       · claims open Dec 18, 2026
   100,000  10%  founder                           · nothing for 12 months, then linear over 12
@@ -57,16 +57,41 @@ fee(t) = 1% + 79% × ((90 − t) / 90)²     the first 90 seconds after the pool
 ```
 
 The pool's LP fee starts at 80% and falls to 1%, so a bot buying in the launch block keeps a fifth of what it
-puts in (on a fork of Base with a 1 ETH pool, $100 at second 0 buys 21% of what $100 buys at second 120). Pool, position and lock
+puts in (on a fork of Base, $100 at second 0 buys 2,002 HAJ; at second 120 it buys 9,785). Pool, positions and lock
 happen in one Ledger broadcast, and the clock starts when the liquidity lands. Only the founder can open the pool,
 nobody can trade or add liquidity before that, and only the founder can add liquidity during the 90 seconds. The
 hook has no owner, no admin and no setters.
 
-**Fees paid during the first 90 seconds go to the locked launch position, which pays out to the founder.**
+**Fees paid during the first 90 seconds go to the locked launch positions, which pay out to the founder.**
 
-**Fees, on a real chain** · Base Sepolia rehearsal, signed on a Ledger
+**The pool** · [`script/Pool.s.sol`](script/Pool.s.sol)
+
+```
+sale     600,000 HAJ, single-sided, from the starting price up      buys move the price; no ETH needed to open
+floor    ETH only, from 95% down to 50% of the starting price        HAJ sold below the start meets real ETH
+both     minted straight into the lock, 12 months, fees to the founder
+```
+
+The starting value (all 1,000,000 HAJ at the opening price) is a number set at launch, not ETH in the pool: buyers
+put the ETH in. At a $10,000 start, $100 buys about 1% of the supply and moves the price about 3.4%.
+
+**On a real chain** · two Base Sepolia rehearsals, every transaction signed on a Ledger
 
 <p align="center"><img src="assets/fee-flow.svg" alt="A trade's fee: buyer, Uniswap v4 pool, locked position, founder" width="100%"></p>
+
+The launch, exactly as it runs at mint (the sale and the floor):
+
+```
+deploy     9 signatures   token, both vaults, claims, lock, hook · 600,000 HAJ left with the founder for the pool
+pool       9 signatures   open, mint the sale (#34301) and the floor (#34302) into the lock, register both
+after      founder holds 0 HAJ · both positions locked until Nov 23, 2027 · launch fee 80% → 1% in 90 s, read on chain
+```
+
+[the pool's liquidity](https://sepolia.basescan.org/tx/0x8765c4fae7f2afbdf5363f8810626ed79470fa69ca7e1782cb66c6a8cbc21b13) ·
+[the lock](https://sepolia.basescan.org/address/0x2E3DF02fb68Ab66F29e0eDC70461007734986779) ·
+[addresses](deployments/base-sepolia.json)
+
+Fees, proven on the first rehearsal:
 
 ```
 buy        0.0002 ETH → 69,964.66 HAJ, through Uniswap's test router      1% fee credited to the locked position
@@ -77,7 +102,7 @@ withdraw() Locked(Nov 21, 2027)
 [buy](https://sepolia.basescan.org/tx/0x981d63f4a1cfe7493f9fb6b90bd3526f9e6992e8f2b69f0d6d5aefeab349cced) ·
 [collect](https://sepolia.basescan.org/tx/0x3516d5915436efcbbdaff09e65d42babbe3630193ee6ae2d469a90ab78be0531) ·
 [the lock](https://sepolia.basescan.org/address/0x26Dd245714cFE1D2f2E651EE39909311567F60e8) ·
-[all rehearsal addresses](deployments/base-sepolia.json)
+[addresses](deployments/base-sepolia-v1.json)
 
 **Claims** · [`src/HajClaim.sol`](src/HajClaim.sol)
 
@@ -109,8 +134,9 @@ ranks      share of 50,000 HAJ
 forge test                      # unit tests + a full launch on forks of Base and Base Sepolia
 
 # launch, every transaction signed on a Ledger (Deploy also deploys the hook; Pool opens the pool, fills it, locks it)
+# START_ETH: what all 1,000,000 HAJ are worth at open · FLOOR_ETH: the ETH floor under the starting price
 FOUNDER=0x… SEASONS=0x… forge script script/Deploy.s.sol --rpc-url base --ledger --sender $FOUNDER --broadcast --verify
-FOUNDER=0x… POOL_ETH=<wei> forge script script/Pool.s.sol --rpc-url base --ledger --sender $FOUNDER --broadcast
+FOUNDER=0x… START_ETH=<wei> FLOOR_ETH=<wei> forge script script/Pool.s.sol --rpc-url base --ledger --sender $FOUNDER --broadcast
 ```
 
 Logo and listing pack: [`assets/token/`](assets/token/LISTING.md).

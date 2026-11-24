@@ -68,6 +68,7 @@ contract TopUp is Script {
         int24 far = int24(int256(PriceMath.ticksFor(lowBps)));
         r.lower = PriceMath.ceilTo(r.tickNow + near + 1, Networks.SPACING);
         r.upper = PriceMath.ceilTo(r.tickNow + far + 1, Networks.SPACING);
+        if (r.upper > Networks.FULL_UPPER) r.upper = Networks.FULL_UPPER; // HAJ already near zero: stop at the edge
         require(r.lower < r.upper, "range too narrow for the 200-tick spacing");
         r.liquidity = LiquidityAmounts.getLiquidityForAmount0(
             TickMath.getSqrtPriceAtTick(r.lower), TickMath.getSqrtPriceAtTick(r.upper), eth

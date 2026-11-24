@@ -2,6 +2,7 @@
 pragma solidity ^0.8.24;
 
 import {Test, console} from "forge-std/Test.sol";
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {IPoolManager} from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
@@ -21,7 +22,7 @@ import {HajLaunchHook} from "../src/HajLaunchHook.sol";
 import {Deploy} from "../script/Deploy.s.sol";
 import {Pool} from "../script/Pool.s.sol";
 import {TopUp} from "../script/TopUp.s.sol";
-import {Networks} from "../script/lib/Uniswap.sol";
+import {Networks, PriceMath} from "../script/lib/Uniswap.sol";
 
 interface IPermit2Holder {
     function permit2() external view returns (address);
@@ -50,7 +51,9 @@ contract ForkTest is Test {
     address person = makeAddr("person");
     address stranger = makeAddr("stranger");
 
-    uint256 constant POOL_ETH = 1 ether; // a rehearsal amount; the launch uses POOL_ETH from the environment
+    // The launch's own numbers: all 1,000,000 HAJ valued at $10,000 at open, and a $100 ETH floor beneath.
+    uint256 constant START_USD = 10_000;
+    uint256 constant FLOOR_USD = 100;
 
     // Chainlink ETH / USD, from Chainlink's feed directory (reference-data-directory.vercel.app, read 2026-11-20).
     IChainlinkFeed constant BASE_ETH_USD = IChainlinkFeed(0xa4250cE1aA15Ff4cb5E5a8655293b65694e436Ed);
@@ -60,6 +63,9 @@ contract ForkTest is Test {
     Networks.Uniswap u;
     PoolKey key;
     PoolSwapTest swapper;
+    uint256 position; // the launch's two positions: the 600,000 HAJ sale and the ETH floor
+    uint256 floor;
+    int24 opening; // the tick the pool opened on
 
     function test_base_fullLaunch() public {
         vm.createSelectFork(vm.envOr("BASE_RPC_URL", string("https://mainnet.base.org")));
@@ -93,9 +99,32 @@ contract ForkTest is Test {
         initializeAs(stranger, 1 << 96);
         initializeAs(sniper, 79228162514264337593543950336000); // a thousand times the launch-ish price
 
-        // 3. The launch: pool, full-range position minted into the lock, fee clock running, in one broadcast.
-        uint256 position = new Pool().open(founder, d.hook, d.lock, address(d.seasonsVest), POOL_ETH);
+        // 3. The launch: pool, the 600,000 HAJ sale and the ETH floor minted into the lock, fee clock running, in one
+        //    broadcast.
+        uint256 startEth = dollars(ethUsd, START_USD);
+        {
+            uint256 floorEth = dollars(ethUsd, FLOOR_USD);
+            uint256 ethBefore = founder.balance;
+            (position, floor) =
+                new Pool().open(founder, d.hook, d.lock, address(d.seasonsVest), startEth, floorEth, 5000, 9500);
+            assertApproxEqAbs(ethBefore - founder.balance, floorEth, 2, "the floor takes exactly FLOOR_ETH");
+        }
         uint64 launchedAt = uint64(block.timestamp);
+        (, opening,,) = u.poolManager.getSlot0(key.toId());
+        {
+            PositionInfo saleInfo = u.positionManager.positionInfo(position);
+            PositionInfo floorInfo = u.positionManager.positionInfo(floor);
+            assertEq(saleInfo.tickUpper(), opening, "the sale starts at the opening price");
+            assertEq(saleInfo.tickLower(), Networks.FULL_LOWER, "and runs all the way up");
+            assertGt(floorInfo.tickLower(), opening, "the floor: ETH only, below the starting price");
+            assertEq(IERC721(address(u.positionManager)).ownerOf(floor), address(d.lock), "floor in the lock");
+            assertEq(d.lock.unlockAt(floor), d.launch + 365 days);
+            // The opening value: 1,000,000 × the price, within the 2% the tick spacing rounds by, never above.
+            uint256 sp = TickMath.getSqrtPriceAtTick(opening); // √(HAJ per ETH) × 2⁹⁶
+            uint256 value = Math.mulDiv(Math.mulDiv(1_000_000e18, 1 << 96, sp), 1 << 96, sp);
+            assertLe(value, startEth, "opens at or under the starting value");
+            assertGe(value * 100, startEth * 97, "within the spacing's rounding");
+        }
         assertEq(d.hook.startedAt(), launchedAt, "fee clock starts with the liquidity");
         assertEq(d.hook.currentFee(), 800_000);
         assertEq(d.token.balanceOf(founder), 0, "founder holds 0 HAJ");
@@ -131,6 +160,24 @@ contract ForkTest is Test {
         console.log("HAJ for $100 at second 0:  ", sniperGot / 1e18);
         console.log("HAJ for $100 at second 120:", personGot / 1e18);
         console.log("second 0 gets this % of second 120:", (sniperGot * 100) / personGot);
+        // At a $10,000 start, $100 moves the price about 3.4% and buys about 1% of the supply.
+        assertApproxEqRel(personGot, 9_800e18, 0.03e18, "a $100 buy at the start");
+        (, int24 afterBuy,,) = u.poolManager.getSlot0(key.toId());
+        assertLt(afterBuy, opening, "buying makes HAJ dearer (a lower tick)");
+        assertGt(int256(afterBuy), int256(opening) - 400, "by under ~4%");
+
+        // Selling below the start meets the floor: someone holding 20,000 HAJ (a Season 1 claimer, say) sells it
+        // all. The person's own ETH pays for the first part; the floor's ETH for the rest.
+        {
+            address claimer = makeAddr("claimer");
+            deal(address(d.token), claimer, 20_000e18);
+            uint256 got = sell(claimer, 20_000e18);
+            (, int24 afterSell,,) = u.poolManager.getSlot0(key.toId());
+            assertGt(afterSell, opening, "the price fell below the start");
+            assertLt(afterSell, opening + int24(int256(PriceMath.ticksFor(5000))), "and stayed inside the floor");
+            assertGt(got, hundred, "more than the person's $100 came out: the floor paid the rest");
+            console.log("ETH for 20,000 HAJ sold into the floor, wei:", got);
+        }
         // 20% of the input vs 99%: about a fifth as much HAJ (a little more, as a smaller trade moves the price less).
         assertGt(sniperGot * 100, personGot * 19);
         assertLt(sniperGot * 100, personGot * 25);
@@ -196,6 +243,20 @@ contract ForkTest is Test {
             ""
         );
         got = d.token.balanceOf(who) - before;
+    }
+
+    function sell(address who, uint256 haj) internal returns (uint256 got) {
+        vm.startPrank(who);
+        d.token.approve(address(swapper), haj);
+        uint256 before = who.balance;
+        swapper.swap(
+            key,
+            SwapParams({zeroForOne: false, amountSpecified: -int256(haj), sqrtPriceLimitX96: TickMath.MAX_SQRT_PRICE - 1}),
+            PoolSwapTest.TestSettings({takeClaims: false, settleUsingBurn: false}),
+            ""
+        );
+        vm.stopPrank();
+        got = who.balance - before;
     }
 
     /// @notice Every way of pulling liquidity out of a locked position before its unlock time reverts: through the
