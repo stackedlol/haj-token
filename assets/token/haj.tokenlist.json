@@ -1,0 +1,23 @@
+{
+  "name": "haj",
+  "timestamp": "2026-11-24T00:49:44.290Z",
+  "version": {
+    "major": 1,
+    "minor": 0,
+    "patch": 0
+  },
+  "logoURI": "https://raw.githubusercontent.com/stackedlol/haj-token/main/assets/token/haj-256.png",
+  "keywords": [
+    "haj"
+  ],
+  "tokens": [
+    {
+      "chainId": 8453,
+      "address": "0x1F6dCE8488Db35650480b210D6C5498bEeAa4bee",
+      "name": "haj",
+      "symbol": "HAJ",
+      "decimals": 18,
+      "logoURI": "https://raw.githubusercontent.com/stackedlol/haj-token/main/assets/token/haj-256.png"
+    }
+  ]
+}

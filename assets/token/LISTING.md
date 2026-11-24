@@ -1,6 +1,6 @@
 # Listing pack
 
-Everything the logo listings ask for, ready before mint. The contract address is filled in at mint.
+Everything the logo listings ask for. Minted on Base on Nov 23, 2026.
 
 ## Logo
 
@@ -18,13 +18,13 @@ White fins on black, centred so they sit well inside the circle that wallets and
 | | |
 |---|---|
 | Name | haj |
-| Symbol | HAJ |
+| Symbol | HAJ (written $HAJ) |
 | Chain | Base (8453) |
 | Decimals | 18 |
-| Contract | *at mint* |
+| Contract | `0x1F6dCE8488Db35650480b210D6C5498bEeAa4bee` |
 | Total and max supply | 1,000,000 (fixed: no mint function) |
-| Pool | Uniswap v4, ETH/HAJ, *pool link at mint* |
-| Liquidity lock | HajLPLock, *address at mint*, unlocks a year after launch |
+| Pool | Uniswap v4, ETH/HAJ, pool id `0xd34def1f9f4fb1fce90052e9e547490bd996df57f6dabe12c54b1c6395a4550c` ([Uniswap](https://app.uniswap.org/explore/tokens/base/0x1F6dCE8488Db35650480b210D6C5498bEeAa4bee)) |
+| Liquidity lock | HajLPLock `0x6B0DfB5cebDB1D56fE261F41e854ba48a31a10e8`, both positions locked until Nov 23, 2027 |
 | Website | https://www.haj.trading |
 | Telegram | https://t.me/think0rswim |
 | Source | https://github.com/stackedlol/haj-token |
@@ -45,4 +45,4 @@ year.*
 
 Telegram verification post (post it, then link it in the CoinGecko form):
 
-> haj (HAJ) on Base: `<contract>`. We're submitting it to CoinGecko. The only contract is the one above.
+> haj ($HAJ) on Base: `0x1F6dCE8488Db35650480b210D6C5498bEeAa4bee`. We're submitting it to CoinGecko. The only contract is the one above.

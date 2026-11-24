@@ -1,6 +1,20 @@
 <p align="center"><img src="assets/banner.gif" alt="haj" width="100%"></p>
 
-<p align="center"><b>haj</b> · a fixed-supply utility token for <a href="https://www.haj.trading">haj</a> · Base</p>
+<p align="center"><b>haj</b> · <b>$HAJ</b> · a fixed-supply utility token for <a href="https://www.haj.trading">haj</a> · Base</p>
+
+**Live on Base** · minted Nov 23, 2026, every transaction signed on a Ledger · all contracts verified on Basescan
+
+```
+$HAJ   0x1F6dCE8488Db35650480b210D6C5498bEeAa4bee
+pool   Uniswap v4, ETH/$HAJ · opened at a $10,000 starting value with a $100 ETH floor
+lock   0x6B0DfB5cebDB1D56fE261F41e854ba48a31a10e8 · both pool positions locked until Nov 23, 2027
+```
+
+[Basescan](https://basescan.org/token/0x1F6dCE8488Db35650480b210D6C5498bEeAa4bee) ·
+[Uniswap](https://app.uniswap.org/explore/tokens/base/0x1F6dCE8488Db35650480b210D6C5498bEeAa4bee) ·
+[DexScreener](https://dexscreener.com/base/0x1F6dCE8488Db35650480b210D6C5498bEeAa4bee) ·
+[the lock](https://basescan.org/address/0x6B0DfB5cebDB1D56fE261F41e854ba48a31a10e8) ·
+[all addresses](deployments/base.json)
 
 **Supply**
 
