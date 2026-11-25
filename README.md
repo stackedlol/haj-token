@@ -39,6 +39,11 @@ contract HajToken is ERC20 {
 }   // no owner · no mint() · no pause() · no upgrade
 ```
 
+<sub>Basescan lists every known bug of the compiler version (solc 0.8.28), whether or not the code uses the feature.
+None applies here. Five need the via-IR pipeline, which this build doesn't use, the high-severity transient storage one included.
+The rest need a recursive struct, a `delete` on one byte of a `bytes` array in memory, inline assembly, or an array
+that wraps past the last storage slot. The token's code (this file plus OpenZeppelin ERC20 5.6.1) has none of those.</sub>
+
 **Locks** · [`script/Deploy.s.sol`](script/Deploy.s.sol) · [`src/HajLPLock.sol`](src/HajLPLock.sol)
 
 ```solidity
@@ -141,6 +146,29 @@ week two   15 HAJ                            (14 active days)
 ranks      share of 50,000 HAJ
            first 1,000 accounts to clear the bar
 ```
+
+**In haj** · every member's wallet, buying and sending
+
+```
+wallet   each member has their own Base wallet: a Coinbase CDP embedded wallet, non-custodial
+         opened by their haj login · haj can make it and read it, never sign with it (no key export, no delegated signing)
+buy      any EVM wallet (Phantom first) → Uniswap's Universal Router → this pool · HAJ lands straight in the member's wallet
+         + haj's 1% in ETH to the founder, in the same transaction · the pool's own 1% unchanged
+send     from the member's wallet to any Base address · the recipient gets exactly what was typed
+         + haj's fee in HAJ to the founder: 1% of the send, at least $0.05 · the wallet pays Base gas in ETH
+```
+
+Proven on Base, Nov 25, 2026, the buyer's side signed on a Ledger:
+
+```
+buy    $2 → 32.42 HAJ into a member's wallet        0.000012 ETH to the founder, 1.000% of the swap, same transaction
+send   5.000000 HAJ, exactly what was typed         then 0.821558 HAJ to the founder ($0.05, the minimum)
+gas    0.00000043 ETH for both transfers of the send
+```
+
+[buy](https://basescan.org/tx/0x4f264066e90f6d4e7e792dd55dcd52543b2b5d12aae0a4cdd5971c9bf170c616) ·
+[send](https://basescan.org/tx/0xe3a5a4e959a42002ce641d561e011002d353bd536b39e80ae8d932e5b771b47d) ·
+[send fee](https://basescan.org/tx/0x09a9a82ee60351abda15a16b4916a83a96c563345f4d8316f88693995e61ecc0)
 
 **Run it**
 
